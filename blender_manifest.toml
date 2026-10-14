@@ -1,0 +1,26 @@
+# Local repository root: C:\Users\sankaku\Documents\gitrepository\
+# Batch_Remap_User/ is the extension directory; this manifest belongs at its root.
+schema_version = "1.0.0"
+id = "batch_remap_user"
+version = "0.1.1"
+name = "Batch Remap User"
+tagline = "Remap selected data-blocks by name to a linked blend file"
+maintainer = "sankaku"
+type = "add-on"
+blender_version_min = "5.0.0"
+license = ["SPDX:GPL-3.0-or-later"]
+tags = ["Pipeline"]
+
+[permissions]
+files = "Read matching data-blocks from already linked blend files"
+
+[build]
+paths_exclude_pattern = [
+    "__pycache__/",
+    "*.pyc",
+    "*.pyo",
+    ".*",
+    "/dist/",
+    "/tests/",
+    "/tools/",
+]
