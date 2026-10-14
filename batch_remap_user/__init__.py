@@ -10,7 +10,17 @@ from bpy.props import BoolProperty, EnumProperty, StringProperty
 
 
 def library_path(library):
-    return os.path.normcase(os.path.realpath(bpy.path.abspath(library.filepath)))
+    """Filesystem/display path, preserving the blend filename's letter case."""
+    return os.path.realpath(bpy.path.abspath(library.filepath))
+
+
+def path_key(path):
+    """Normalize case only for filesystem identity comparisons."""
+    return os.path.normcase(os.path.realpath(path))
+
+
+def library_key(library):
+    return path_key(library_path(library))
 
 
 def id_collections():
@@ -75,16 +85,18 @@ def snapshot_selection(context):
 def resolve_source(record):
     if not record['collection']:
         return None
+    source_key = path_key(record['library']) if record['library'] else ''
     for data in getattr(bpy.data, record['collection']):
-        path = library_path(data.library) if data.library else ''
-        if data.name == record['name'] and path == record['library']:
+        key = library_key(data.library) if data.library else ''
+        if data.name == record['name'] and key == source_key:
             return data
     return None
 
 
 def find_target(source, collection, target_path):
+    target_key = path_key(target_path)
     for data in getattr(bpy.data, collection):
-        if (data.library and library_path(data.library) == target_path
+        if (data.library and library_key(data.library) == target_key
                 and data.name == source.name
                 and data.bl_rna.identifier == source.bl_rna.identifier
                 and not data.is_embedded_data
@@ -127,8 +139,13 @@ def remap_collection_users(source, target):
 
 def remap_batch(records, target_path, link_missing=True):
     """Return (remapped, skipped, failures, linked). Never delete source IDs."""
-    if not any(library_path(lib) == target_path for lib in bpy.data.libraries):
+    target_key = path_key(target_path)
+    target_library = next((lib for lib in bpy.data.libraries
+                           if library_key(lib) == target_key), None)
+    if target_library is None:
         raise ValueError('The target must be an already linked library')
+    # Load using the actual linked path, even for old/scripted normalized paths.
+    target_path = library_path(target_library)
 
     sources = []
     skipped = []
@@ -137,7 +154,7 @@ def remap_batch(records, target_path, link_missing=True):
         problem = record['problem'] or (source_problem(source) if source else 'Source no longer exists')
         if problem:
             skipped.append((record['name'], problem))
-        elif source.library and library_path(source.library) == target_path:
+        elif source.library and library_key(source.library) == target_key:
             skipped.append((source.name, 'Already in the target library'))
         else:
             sources.append((source, record['collection']))
@@ -255,8 +272,8 @@ class OUTLINER_OT_batch_remap_user(bpy.types.Operator):
         self.target_path = ''
         paths = [item[0] for item in library_items(self, context)]
         # Prefer a library different from all selected source libraries.
-        source_paths = {record['library'] for record in records}
-        self.target_library = next((path for path in paths if path not in source_paths), paths[0])
+        source_paths = {path_key(record['library']) for record in records if record['library']}
+        self.target_library = next((path for path in paths if path_key(path) not in source_paths), paths[0])
         return context.window_manager.invoke_props_dialog(self, width=650)
 
     def draw(self, context):

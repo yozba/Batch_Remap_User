@@ -21,7 +21,7 @@ C:\Users\sankaku\Documents\gitrepository\
 
 このフォルダーで `python tools/build.py` を実行すると、インストール用ZIPを `dist/` に生成します。
 
-Preferences → Add-ons → 右上のメニュー → **Install from Disk** から `dist/batch_remap_user-0.1.1.zip` を選択し、有効にしてください。ZIPは展開せずに指定します。
+Preferences → Add-ons → 右上のメニュー → **Install from Disk** から `dist/batch_remap_user-0.1.2.zip` を選択し、有効にしてください。ZIPは展開せずに指定します。
 
 Local Repositoryでソースを更新した場合は、Blenderを再起動して変更を読み直してください。
 

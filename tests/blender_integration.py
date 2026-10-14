@@ -7,6 +7,7 @@ import shutil
 import uuid
 import json
 import faulthandler
+import os
 
 import bpy
 
@@ -59,8 +60,8 @@ def check():
     with test_directory(test_root) as directory:
         directory = Path(directory)
         assert directory.resolve().is_relative_to(test_root)
-        destination = directory / 'destination.blend'
-        other = directory / 'other.blend'
+        destination = directory / 'AssetLibrary_MiXeD.blend'
+        other = directory / 'OtherLibrary_MiXeD.blend'
         materials = [local_material(name) for name in ('Anchor', 'Wood', 'Metal', 'Shared', 'ObjectTarget')]
         mesh = bpy.data.meshes.new('Wood')  # Same name as a material: keep types separate.
         target_object = bpy.data.objects.new('ObjectTarget', mesh)
@@ -78,6 +79,10 @@ def check():
         anchor = loaded.materials[0]
         other_loaded = link(other, materials=['Elsewhere']).materials[0]
         path = addon.library_path(anchor.library)
+        assert Path(path).name == destination.name, path
+        target_item = next(item for item in addon.library_items(None, bpy.context) if item[0] == path)
+        assert target_item[1].startswith(destination.name + '  '), target_item
+        assert destination.name in target_item[2], target_item
         wood = local_material('Wood')
         metal = local_material('Metal')
         unselected = local_material('Shared')
@@ -99,12 +104,15 @@ def check():
 
         records = snapshot(wood, metal, source_mesh, suffix, missing, anchor, anchor.library, wood)
         assert len(records) == 7, records  # Duplicate selections are processed once.
-        counts = addon.remap_batch(records, path)
+        # Old saved/scripted paths may have been normalized to lowercase on
+        # Windows. Resolve their identity, then load the actual mixed-case path.
+        counts = addon.remap_batch(records, os.path.normcase(path))
         assert counts[0] == 3 and len(counts[1]) == 4 and not counts[2] and counts[3] == 3, counts
         target_wood = addon.find_target(wood, 'materials', path)
         assert wood_user.data.materials[0] == target_wood
         assert shared_user.data.materials[0] == target_wood
         assert metal_user.data.materials[0].library == anchor.library
+        assert Path(metal_user.data.materials[0].library.filepath).name == destination.name
         assert mesh_user.data.library == anchor.library
         assert mesh_user.data.bl_rna.identifier == 'Mesh'
         assert unselected_user.data.materials[0] == unselected
@@ -157,6 +165,9 @@ def check():
         linked_collection = link(collection_source_path, collections=['LinkedCollectionTarget']).collections[0]
         assert addon.source_problem(linked_collection) is None
         assert snapshot(linked_collection)[0]['problem'] is None
+        legacy_record = snapshot(linked_collection)[0]
+        legacy_record['library'] = os.path.normcase(legacy_record['library'])
+        assert addon.resolve_source(legacy_record) == linked_collection
         clicked_only = SimpleNamespace(selected_ids=(), id=linked_collection)
         assert addon.snapshot_selection(clicked_only) == snapshot(linked_collection)
         # Opening a popup can lose the menu's selection context. The captured
