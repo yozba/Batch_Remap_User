@@ -13,7 +13,8 @@ assert len(manifest['tagline']) <= 64
 destination = root / 'dist' / f"{manifest['id']}-{manifest['version']}.zip"
 destination.parent.mkdir(exist_ok=True)
 with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:
-    for name in ('__init__.py', 'blender_manifest.toml', 'batch_remap_user/__init__.py'):
+    for name in ('__init__.py', 'blender_manifest.toml', 'batch_remap_user/__init__.py',
+                 'batch_remap_user/missing_libraries.py'):
         archive.write(source / name, name)
     archive.write(root / 'README.md', 'README.md')
 print(destination)

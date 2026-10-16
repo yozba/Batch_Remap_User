@@ -21,7 +21,7 @@ C:\Users\sankaku\Documents\gitrepository\
 
 このフォルダーで `python tools/build.py` を実行すると、インストール用ZIPを `dist/` に生成します。
 
-Preferences → Add-ons → 右上のメニュー → **Install from Disk** から `dist/batch_remap_user-0.2.1.zip` を選択し、有効にしてください。ZIPは展開せずに指定します。
+Preferences → Add-ons → 右上のメニュー → **Install from Disk** から `dist/batch_remap_user-0.3.0.zip` を選択し、有効にしてください。ZIPは展開せずに指定します。
 
 Local Repositoryでソースを更新した場合は、Blenderを再起動して変更を読み直してください。
 
@@ -39,6 +39,22 @@ Local Repositoryでソースを更新した場合は、Blenderを再起動して
 例えば、ローカルのMaterial `Wood` / `Metal` を選択し `assets.blend` を指定すると、両方を同ファイルのMaterial `Wood` / `Metal` に置き換えます。他のBlendからLinkしたデータも移行元にできます。
 
 既にLinkされているCollection `build_004` を選び、新しいBlendファイルのパスを入力すれば、そのファイルの同名Collectionに参照を移せます。移行元がMissing状態でも処理できます。移行先のデータは正常に読み込めるものを使用します。
+
+## Find Missing Linked Libraries
+
+データブロックを選択せずに、欠損したLinked Libraryを指定のBlendファイルへまとめて付け替えます。
+
+1. **File → External Data → Find Missing Linked Libraries...** を実行します。F3で名前を検索しても実行できます。
+2. ファイルブラウザーで、復旧先に使いたい `.blend` をひとつ指定します。フォルダー検索は行いません。
+3. 指定ファイル内の同名・同種のデータで復旧し、ライブラリを再読み込みします。元と違うBlendファイル名でも指定できます。
+
+- 対象は、現在のファイルにあるリンク先Blendが欠損しているLibrary全体です。正常なLibraryは対象にしません。
+- 複数の欠損Libraryが同名・同種のデータを参照している場合は、指定Blend内の同じデータへの参照になります。
+- 指定ファイルに見つからないデータは、元の欠損リンクを残し、未解決として件数と詳細を報告します。
+- 別のBlend経由で読み込まれた間接Libraryは、Blenderが直接のRelocateを禁止しています。未解決として修正が必要な親Blendのパスをシステムコンソールに表示します。親Blendを開いてこのオペレーター等で修正してください。
+- 画像などの外部ファイルのパスや、外部Blendファイルそのものは書き換えません。Ctrl+Zで戻せます。
+
+Blender 5.1標準の **Find Missing Files** でも欠損ライブラリのパスは検索できますが、復旧後に再読み込みが必要な場合があります。この追加オペレーターは、明示的に指定したBlendファイルを使い、ライブラリの付け替えと再読み込みをまとめて行います。[Blender 5.1マニュアル](https://docs.blender.org/manual/id/5.1/interface/window_system/topbar.html)
 
 ## 照合と処理範囲
 
@@ -63,6 +79,9 @@ Blender本体での統合テスト:
 
 ```powershell
 & 'path\to\blender.exe' --background --factory-startup --python-exit-code 1 --python tests/blender_integration.py
+& 'path\to\blender.exe' --background --factory-startup --python-exit-code 1 --python tests/blender_missing_libraries.py
 ```
 
 テストは一時フォルダー内でBlendファイルを作成し、初回Link、ポップアップでの移行先パス指定、Missing状態のCollection・Materialの復旧、ファイルブラウザーでの選択保持、複数のOutliner表示モード、同名・異種・複数ライブラリ・未Linkデータ・選択外データ・Undoを確認します。利用中のファイルには触れません。
+
+ライブラリ復旧のテストでは、選択なしでの複数Libraryの復旧、部分一致時の未解決リンク保持、正常な同名Libraryデータ・画像パスの維持、相対パス、間接リンクの報告、Undoを確認します。

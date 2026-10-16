@@ -380,6 +380,9 @@ MENU_NAMES = ('OUTLINER_MT_id_data', 'OUTLINER_MT_object',
 
 
 def register():
+    from .missing_libraries import FILE_OT_find_missing_linked_libraries, draw_external_data_menu
+    bpy.utils.register_class(FILE_OT_find_missing_linked_libraries)
+    bpy.types.TOPBAR_MT_file_external_data.append(draw_external_data_menu)
     bpy.utils.register_class(OUTLINER_OT_batch_remap_user_file)
     bpy.utils.register_class(OUTLINER_OT_batch_remap_user)
     for name in MENU_NAMES:
@@ -388,10 +391,13 @@ def register():
 
 def unregister():
     global _library_enum_items
+    from .missing_libraries import FILE_OT_find_missing_linked_libraries, draw_external_data_menu
     for name in reversed(MENU_NAMES):
         getattr(bpy.types, name).remove(draw_menu)
     bpy.utils.unregister_class(OUTLINER_OT_batch_remap_user)
     bpy.utils.unregister_class(OUTLINER_OT_batch_remap_user_file)
+    bpy.types.TOPBAR_MT_file_external_data.remove(draw_external_data_menu)
+    bpy.utils.unregister_class(FILE_OT_find_missing_linked_libraries)
     _library_enum_items = ()
     _library_item_cache.clear()
 

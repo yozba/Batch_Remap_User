@@ -428,4 +428,5 @@ def check():
     print('PASS: missing source recovery, popup file path, first link, Outliner modes, exact matches, collections, overrides, Undo')
 
 
-check()
+if __name__ == '__main__':
+    check()
