@@ -128,6 +128,96 @@ def check_first_link(destination):
     bpy.ops.wm.read_factory_settings(use_empty=True)
 
 
+def check_missing_sources(directory):
+    source_path = directory / 'OriginalAssets.blend'
+    replacement_path = directory / 'ReplacementAssets.blend'
+    scene_path = directory / 'SceneWithBrokenLinks.blend'
+    source_collection = bpy.data.collections.new('build_004')
+    source_collection.objects.link(bpy.data.objects.new('OriginalMember', None))
+    source_material = local_material('RecoverMaterial')
+    bpy.data.libraries.write(str(source_path), {source_collection, source_material})
+    source_collection.name = 'SavedOriginalCollection'
+    source_material.name = 'SavedOriginalMaterial'
+    replacement_collection = bpy.data.collections.new('build_004')
+    replacement_collection.objects.link(bpy.data.objects.new('RecoveredMember', None))
+    replacement_material = local_material('RecoverMaterial')
+    bpy.data.libraries.write(str(replacement_path), {replacement_collection, replacement_material})
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+
+    linked = link(source_path, collections=['build_004'], materials=['RecoverMaterial'])
+    bpy.context.scene.collection.children.link(linked.collections[0])
+    instance = bpy.data.objects.new('RecoveryInstance', None)
+    instance.instance_type = 'COLLECTION'
+    instance.instance_collection = linked.collections[0]
+    bpy.context.scene.collection.objects.link(instance)
+    material_user('RecoveryMaterialUser', linked.materials[0])
+    bpy.context.preferences.filepaths.file_preview_type = 'NONE'
+    bpy.ops.wm.save_as_mainfile(filepath=str(scene_path), relative_remap=False)
+    # Only move this test-generated file inside the verified test directory.
+    unavailable_path = directory / 'OriginalAssetsUnavailable.blend'
+    assert source_path.resolve().parent == directory.resolve()
+    assert unavailable_path.resolve().parent == directory.resolve()
+    source_path.rename(unavailable_path)
+    bpy.ops.wm.open_mainfile(filepath=str(scene_path), load_ui=False)
+
+    instance = bpy.data.objects['RecoveryInstance']
+    missing_collection = instance.instance_collection
+    missing_material = bpy.data.objects['RecoveryMaterialUser'].data.materials[0]
+    assert missing_collection.is_missing and missing_material.is_missing
+    assert addon.source_problem(missing_collection) is None
+    records = snapshot(missing_collection, missing_material)
+    assert all(record['problem'] is None for record in records)
+    # A snapshot captured by an older version must not keep blocking recovery.
+    for record in records:
+        record['problem'] = 'Missing library data-block'
+    reports = []
+    invocation = SimpleNamespace(selection_json=json.dumps(records), report=lambda severity, message: reports.append(message))
+    dialog_context = SimpleNamespace(
+        selected_ids=[missing_collection, missing_material],
+        window_manager=SimpleNamespace(invoke_props_dialog=lambda operator, width: {'RUNNING_MODAL'}),
+    )
+    assert addon.OUTLINER_OT_batch_remap_user.invoke(invocation, dialog_context, None) == {'RUNNING_MODAL'}
+    assert invocation.target_library == addon.BROWSE_TARGET
+    assert not reports and all(record['problem'] is None for record in json.loads(invocation.selection_json))
+    assert not any(addon.library_key(lib) == addon.path_key(str(replacement_path)) for lib in bpy.data.libraries)
+
+    area = next(area for area in bpy.context.screen.areas if area.type == 'OUTLINER')
+    area.spaces.active.display_mode = 'VIEW_LAYER'
+    bpy.context.preferences.edit.use_global_undo = True
+    with bpy.context.temp_override(area=area, selected_ids=[missing_collection, missing_material]):
+        bpy.ops.ed.undo_push(message='Before missing source recovery')
+        # This is the main popup's directly entered file path, not the separate
+        # file-browser operator. The replacement file is linked for the first time.
+        result = bpy.ops.outliner.batch_remap_user(
+            'EXEC_DEFAULT', target_library=addon.BROWSE_TARGET,
+            target_path=str(replacement_path), selection_json=json.dumps(records),
+        )
+        assert result == {'FINISHED'}, result
+        recovered = instance.instance_collection
+        assert not recovered.is_missing and recovered.name == 'build_004'
+        assert recovered.objects.get('RecoveredMember') is not None
+        assert addon.library_key(recovered.library) == addon.path_key(str(replacement_path))
+        assert recovered in bpy.context.scene.collection.children.values()
+        recovered_material = bpy.data.objects['RecoveryMaterialUser'].data.materials[0]
+        assert not recovered_material.is_missing
+        assert recovered_material.library == recovered.library
+        bpy.ops.ed.undo_push(message='After missing source recovery')
+        bpy.ops.ed.undo()
+        restored_collection = addon.resolve_source(records[0])
+        restored_material = addon.resolve_source(records[1])
+        assert restored_collection.is_missing and restored_material.is_missing
+        assert bpy.data.objects['RecoveryInstance'].instance_collection == restored_collection
+        assert bpy.data.objects['RecoveryMaterialUser'].data.materials[0] == restored_material
+
+        # The same missing sources can also use the now-loaded destination library.
+        result = bpy.ops.outliner.batch_remap_user(
+            'EXEC_DEFAULT', target_library=str(replacement_path), selection_json=json.dumps(records),
+        )
+        assert result == {'FINISHED'}, result
+        assert not bpy.data.objects['RecoveryInstance'].instance_collection.is_missing
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+
+
 def check():
     addon.register()
     workspace = Path(__file__).resolve().parents[1]
@@ -152,6 +242,7 @@ def check():
         bpy.ops.wm.read_factory_settings(use_empty=True)
 
         check_first_link(destination)
+        check_missing_sources(directory)
 
         # Establish two pre-linked libraries; matching data is initially absent.
         loaded = link(destination, materials=['Anchor'])
@@ -334,7 +425,7 @@ def check():
         else:
             raise AssertionError('Missing target was accepted')
     addon.unregister()
-    print('PASS: first link, file-browser snapshot, Outliner modes, exact matches, mixed types, linked sources, collections, overrides, Undo')
+    print('PASS: missing source recovery, popup file path, first link, Outliner modes, exact matches, collections, overrides, Undo')
 
 
 check()

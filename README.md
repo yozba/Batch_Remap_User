@@ -21,7 +21,7 @@ C:\Users\sankaku\Documents\gitrepository\
 
 このフォルダーで `python tools/build.py` を実行すると、インストール用ZIPを `dist/` に生成します。
 
-Preferences → Add-ons → 右上のメニュー → **Install from Disk** から `dist/batch_remap_user-0.2.0.zip` を選択し、有効にしてください。ZIPは展開せずに指定します。
+Preferences → Add-ons → 右上のメニュー → **Install from Disk** から `dist/batch_remap_user-0.2.1.zip` を選択し、有効にしてください。ZIPは展開せずに指定します。
 
 Local Repositoryでソースを更新した場合は、Blenderを再起動して変更を読み直してください。
 
@@ -30,13 +30,15 @@ Local Repositoryでソースを更新した場合は、Blenderを再起動して
 1. Outlinerで、置き換えたいデータブロックを複数選択します。表示モードをBlender Fileに変える必要はありません。異なる種類を混在させても構いません。
 2. 右クリック → **Batch Remap User**。データの種類によっては **ID Data** 内にも表示されます。Outliner上でF3から検索しても実行できます。
 3. ポップアップの **Target Blend File** で移行先を選びます。既にLink済みのBlendファイルはそのまま選択してOKを押せます。同じファイル名でもフルパスで区別できます。
-4. 別のファイルを指定する場合は **Choose Blend File...** を選んでOKを押します。開いたファイルブラウザーで `.blend` を指定し、**Batch Remap User** を押すと、必要な同名データをLinkしてからRemapします。
+4. 別のファイルを指定する場合は **Choose Blend File...** を選びます。同じポップアップに表示される **Blend File Path** に移行先の `.blend` のパスを入力してOKを押すと、必要な同名データを初めてLinkしてからRemapします。**Browse...** ボタンからファイルブラウザーで選ぶこともできます。
 
 **Link Missing Matching Data** はリンク済みファイルを選んだ場合の設定です。ONの場合、移行先ファイルに存在するが現在のBlendに未Linkの同名データも追加でLinkします。OFFの場合は読み込み済みのデータだけで照合します。ファイルブラウザーから指定した場合は常に同名データをLinkします。追加Linkに伴ってBlenderが依存データも読み込むことがあります。
 
 事前のLinkは不要です。ファイルブラウザーをキャンセルした場合や、同名データが一件もない場合は、新しいLinkを作りません。ファイルブラウザーを開く前の選択内容を保持して処理します。
 
 例えば、ローカルのMaterial `Wood` / `Metal` を選択し `assets.blend` を指定すると、両方を同ファイルのMaterial `Wood` / `Metal` に置き換えます。他のBlendからLinkしたデータも移行元にできます。
+
+既にLinkされているCollection `build_004` を選び、新しいBlendファイルのパスを入力すれば、そのファイルの同名Collectionに参照を移せます。移行元がMissing状態でも処理できます。移行先のデータは正常に読み込めるものを使用します。
 
 ## 照合と処理範囲
 
@@ -45,7 +47,7 @@ Local Repositoryでソースを更新した場合は、Blenderを再起動して
 - 選択したデータブロックそのものが対象です。Objectを選んでも、そのMeshやMaterialを個別にRemapする処理は追加しません。
 - Remapは選択したIDの参照を置き換えます。同じIDを共有している未選択のObjectなどにも反映されます。[Blenderの `ID.user_remap()`](https://docs.blender.org/api/5.0/bpy.types.ID.html) を使用します。
 - 移行元データブロックは削除しません。不要になったデータの整理はBlender標準のPurgeなどで行えます。
-- 同名データが見つからないもの、移行先自身、Library見出し、Library Override、埋め込みデータ、欠損したリンクデータはスキップします。Edit Mode等のObjectもスキップします。
+- 同名データが見つからないもの、移行先自身、Library見出し、Library Override、埋め込みデータはスキップします。Edit Mode等のObjectもスキップします。Missing状態のリンクデータも移行元にできますが、Missing状態のデータは移行先に使用しません。
 - Libraryや種類の見出しを選ぶだけで、その配下を再帰的に処理する機能はありません。対象データの行を選択してください。
 - 外部Blendファイルは書き換えません。リンク元の内部参照・Overrideの再構築にはBlender自身のRemapの制約が適用されます。
 - 移行先には外部の `.blend` を指定してください。現在開いているBlendファイル自身は指定できません。
@@ -63,4 +65,4 @@ Blender本体での統合テスト:
 & 'path\to\blender.exe' --background --factory-startup --python-exit-code 1 --python tests/blender_integration.py
 ```
 
-テストは一時フォルダー内でBlendファイルを作成し、初回Link、ファイルブラウザーでの選択保持、複数のOutliner表示モード、同名・異種・複数ライブラリ・未Linkデータ・選択外データ・Undoを確認します。利用中のファイルには触れません。
+テストは一時フォルダー内でBlendファイルを作成し、初回Link、ポップアップでの移行先パス指定、Missing状態のCollection・Materialの復旧、ファイルブラウザーでの選択保持、複数のOutliner表示モード、同名・異種・複数ライブラリ・未Linkデータ・選択外データ・Undoを確認します。利用中のファイルには触れません。

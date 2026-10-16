@@ -2,7 +2,7 @@
 # Batch_Remap_User/ is the extension directory; this manifest belongs at its root.
 schema_version = "1.0.0"
 id = "batch_remap_user"
-version = "0.2.0"
+version = "0.2.1"
 name = "Batch Remap User"
 tagline = "Remap selected data-blocks by name to a linked blend file"
 maintainer = "sankaku"

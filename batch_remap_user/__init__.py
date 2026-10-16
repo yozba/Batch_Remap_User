@@ -52,8 +52,8 @@ def source_problem(data):
         return 'Embedded data-block'
     if data.override_library is not None:
         return 'Library override'
-    if getattr(data, 'is_missing', False):
-        return 'Missing library data-block'
+    # Missing linked IDs are valid sources: remapping their users to a healthy
+    # ID from another blend file is how broken links can be recovered.
     if isinstance(data, bpy.types.Object) and data.mode != 'OBJECT':
         return 'Object is not in Object Mode'
     if getattr(data, 'is_editmode', False):
@@ -163,7 +163,7 @@ def remap_batch(records, target_path, link_missing=True):
     skipped = []
     for record in records:
         source = resolve_source(record)
-        problem = record['problem'] or (source_problem(source) if source else 'Source no longer exists')
+        problem = source_problem(source) if source is not None else 'Source no longer exists'
         if problem:
             skipped.append((record['name'], problem))
         elif source.library and library_key(source.library) == target_key:
@@ -286,7 +286,11 @@ class OUTLINER_OT_batch_remap_user(bpy.types.Operator):
     target_library: EnumProperty(
         name='Target Blend File', items=library_items, update=target_library_changed,
     )
-    target_path: StringProperty(options={'HIDDEN'})
+    target_path: StringProperty(
+        name='Blend File Path',
+        description='Path to the destination blend file; enter a path or use Browse',
+        options={'SKIP_SAVE'},
+    )
     selection_json: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
     link_missing: BoolProperty(
         name='Link Missing Matching Data', default=True,
@@ -307,6 +311,11 @@ class OUTLINER_OT_batch_remap_user(bpy.types.Operator):
         # The right-click menu snapshots its Outliner context before the popup
         # changes regions. F3 invocation captures the current selection here.
         records = json.loads(self.selection_json) if self.selection_json else snapshot_selection(context)
+        # Re-check the current IDs instead of trusting an old menu snapshot's
+        # diagnostic (for example, one made before missing sources were allowed).
+        for record in records:
+            source = resolve_source(record)
+            record['problem'] = source_problem(source) if source is not None else 'Source no longer exists'
         if not any(not record['problem'] for record in records):
             details = '; '.join(f"{record['name']}: {record['problem']}" for record in records)
             self.report({'WARNING'}, details or 'No data-blocks selected in the Outliner')
@@ -317,14 +326,21 @@ class OUTLINER_OT_batch_remap_user(bpy.types.Operator):
         # Prefer a library different from all selected source libraries.
         source_paths = {path_key(record['library']) for record in records if record['library']}
         self.target_library = next((path for path in paths if path_key(path) not in source_paths),
-                                   paths[0] if paths else BROWSE_TARGET)
+                                   BROWSE_TARGET)
         return context.window_manager.invoke_props_dialog(self, width=650)
 
     def draw(self, context):
         layout = self.layout
         layout.prop(self, 'target_library')
         if self.target_library == BROWSE_TARGET:
-            layout.label(text='Press OK to choose a blend file and link matching data.')
+            layout.prop(self, 'target_path')
+            row = layout.row()
+            row.operator_context = 'INVOKE_DEFAULT'
+            browse = row.operator(OUTLINER_OT_batch_remap_user_file.bl_idname, text='Browse...')
+            browse.selection_json = self.selection_json
+            if self.target_path:
+                browse.filepath = bpy.path.abspath(self.target_path)
+            layout.label(text='Enter a path and press OK, or browse for a blend file.')
         else:
             layout.prop(self, 'link_missing')
         records = json.loads(self.selection_json or '[]')
@@ -346,7 +362,8 @@ class OUTLINER_OT_batch_remap_user(bpy.types.Operator):
             self.report({'ERROR'}, 'Choose a blend file')
             return {'CANCELLED'}
         self.target_path = target_path
-        return execute_remap(self, context, target_path, records, self.link_missing)
+        link_missing = True if self.target_library == BROWSE_TARGET else self.link_missing
+        return execute_remap(self, context, target_path, records, link_missing)
 
 
 def draw_menu(self, context):
