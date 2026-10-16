@@ -51,6 +51,83 @@ def test_directory(root):
         shutil.rmtree(resolved)
 
 
+def check_first_link(destination):
+    assert not bpy.data.libraries
+    source = bpy.data.collections.new('CollectionTarget')
+    bpy.context.scene.collection.children.link(source)
+    instance = bpy.data.objects.new('FirstLinkInstance', None)
+    instance.instance_type = 'COLLECTION'
+    instance.instance_collection = source
+    bpy.context.scene.collection.objects.link(instance)
+    untouched = local_material('Metal')
+    records = snapshot(source)
+    area = next(area for area in bpy.context.screen.areas if area.type == 'OUTLINER')
+    area.spaces.active.display_mode = 'VIEW_LAYER'
+
+    # With no existing libraries, the main dialog offers the file browser.
+    reports = []
+    invocation = SimpleNamespace(selection_json='', report=lambda severity, message: reports.append(message))
+    dialog_context = SimpleNamespace(
+        selected_ids=[source],
+        window_manager=SimpleNamespace(invoke_props_dialog=lambda operator, width: {'RUNNING_MODAL'}),
+    )
+    with bpy.context.temp_override(area=area, selected_ids=[source]):
+        assert addon.OUTLINER_OT_batch_remap_user.poll(bpy.context)
+    assert addon.OUTLINER_OT_batch_remap_user.invoke(invocation, dialog_context, None) == {'RUNNING_MODAL'}
+    assert invocation.target_library == addon.BROWSE_TARGET and not reports
+
+    # Opening (or cancelling) the browser must not link anything. The snapshot
+    # stays with its own operator, independent of the browser's selection.
+    browser_calls = []
+    browser_state = SimpleNamespace(selection_json=json.dumps(records))
+    browser_context = SimpleNamespace(window_manager=SimpleNamespace(fileselect_add=browser_calls.append))
+    assert addon.OUTLINER_OT_batch_remap_user_file.invoke(browser_state, browser_context, None) == {'RUNNING_MODAL'}
+    assert browser_calls == [browser_state] and not bpy.data.libraries
+
+    try:
+        addon.remap_batch(records, str(destination), link_missing=False)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError('An unlinked file was accepted with linking disabled')
+    assert not bpy.data.libraries and instance.instance_collection == source
+
+    # No match should leave the file unlinked instead of importing unrelated IDs.
+    no_match = local_material('NoExactMatch')
+    counts = addon.remap_batch(snapshot(no_match), str(destination))
+    assert counts[0] == 0 and len(counts[1]) == 1 and not counts[2] and counts[3] == 0, counts
+    assert not bpy.data.libraries
+
+    # Execute in the actual FILE_BROWSER area with no Outliner selection context.
+    # The file-picker operator creates the first library and remains undoable.
+    bpy.context.preferences.edit.use_global_undo = True
+    area.type = 'FILE_BROWSER'
+    with bpy.context.temp_override(area=area):
+        bpy.ops.ed.undo_push(message='Before first link')
+        result = bpy.ops.outliner.batch_remap_user_file(
+            'EXEC_DEFAULT', filepath=str(destination), selection_json=json.dumps(records),
+        )
+        assert result == {'FINISHED'}, result
+        target = instance.instance_collection
+        assert target.library and Path(target.library.filepath).name == destination.name
+        assert target.name == 'CollectionTarget'
+        assert target in bpy.context.scene.collection.children.values()
+        assert source.library is None
+        assert untouched.library is None
+        assert not any(material.name == 'Metal' and material.library for material in bpy.data.materials)
+        bpy.ops.ed.undo_push(message='After first link')
+        bpy.ops.ed.undo()
+        restored = addon.resolve_source(records[0])
+        assert restored and restored.library is None
+        assert bpy.data.objects['FirstLinkInstance'].instance_collection == restored
+        assert restored in bpy.context.scene.collection.children.values()
+        # Blender can retain linked IDs across Undo; scene references must return
+        # to the original local collection, and no linked root may remain in use.
+        assert all(child.library is None for child in bpy.context.scene.collection.children)
+    area.type = 'OUTLINER'
+    bpy.ops.wm.read_factory_settings(use_empty=True)
+
+
 def check():
     addon.register()
     workspace = Path(__file__).resolve().parents[1]
@@ -73,6 +150,8 @@ def check():
         other_material = local_material('Elsewhere')
         bpy.data.libraries.write(str(other), {other_material})
         bpy.ops.wm.read_factory_settings(use_empty=True)
+
+        check_first_link(destination)
 
         # Establish two pre-linked libraries; matching data is initially absent.
         loaded = link(destination, materials=['Anchor'])
@@ -221,14 +300,16 @@ def check():
 
         # Test real operator invocation, Outliner poll, and Undo with a stored snapshot.
         area = next(area for area in bpy.context.screen.areas if area.type == 'OUTLINER')
-        area.spaces.active.display_mode = 'LIBRARIES'
         operator_source = shared_source
         shared_instance.instance_collection = operator_source
         bpy.context.scene.collection.children.link(operator_source)
         operator_records = snapshot(operator_source)
         bpy.context.preferences.edit.use_global_undo = True
         with bpy.context.temp_override(area=area, selected_ids=[operator_source]):
-            assert addon.OUTLINER_OT_batch_remap_user.poll(bpy.context)
+            for display_mode in ('VIEW_LAYER', 'SCENES', 'LIBRARIES', 'ORPHAN_DATA'):
+                area.spaces.active.display_mode = display_mode
+                assert addon.OUTLINER_OT_batch_remap_user.poll(bpy.context), display_mode
+            area.spaces.active.display_mode = 'VIEW_LAYER'
             bpy.ops.ed.undo_push(message='Before Batch Remap')
             result = bpy.ops.outliner.batch_remap_user(
                 'EXEC_DEFAULT', target_library=path,
@@ -245,15 +326,15 @@ def check():
             assert restored_user.instance_collection == restored_source
             assert restored_source in bpy.context.scene.collection.children.values()
 
-        # A disconnected target must fail before altering users.
+        # A missing target must fail before altering users.
         try:
             addon.remap_batch([], str(directory / 'not_linked.blend'))
         except ValueError:
             pass
         else:
-            raise AssertionError('Unlinked target was accepted')
+            raise AssertionError('Missing target was accepted')
     addon.unregister()
-    print('PASS: exact matches, mixed types, missing links, shared users, linked sources, objects, collections, overrides, operator, Undo')
+    print('PASS: first link, file-browser snapshot, Outliner modes, exact matches, mixed types, linked sources, collections, overrides, Undo')
 
 
 check()

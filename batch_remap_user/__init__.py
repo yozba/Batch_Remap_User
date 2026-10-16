@@ -7,6 +7,10 @@ from collections import defaultdict
 
 import bpy
 from bpy.props import BoolProperty, EnumProperty, StringProperty
+from bpy_extras.io_utils import ImportHelper
+
+
+BROWSE_TARGET = '__CHOOSE_BLEND_FILE__'
 
 
 def library_path(library):
@@ -139,13 +143,21 @@ def remap_collection_users(source, target):
 
 def remap_batch(records, target_path, link_missing=True):
     """Return (remapped, skipped, failures, linked). Never delete source IDs."""
+    if not target_path:
+        raise ValueError('Choose a blend file')
+    target_path = os.path.realpath(bpy.path.abspath(target_path))
     target_key = path_key(target_path)
+    if bpy.data.filepath and target_key == path_key(bpy.data.filepath):
+        raise ValueError('Choose an external blend file, not the current file')
     target_library = next((lib for lib in bpy.data.libraries
                            if library_key(lib) == target_key), None)
-    if target_library is None:
-        raise ValueError('The target must be an already linked library')
-    # Load using the actual linked path, even for old/scripted normalized paths.
-    target_path = library_path(target_library)
+    if target_library is not None:
+        # Use the original filename case even for old/scripted normalized paths.
+        target_path = library_path(target_library)
+    elif not link_missing:
+        raise ValueError('Enable Link Missing Matching Data for a file that is not linked yet')
+    elif not target_path.lower().endswith('.blend') or not os.path.isfile(target_path):
+        raise ValueError('Choose an existing .blend file: ' + target_path)
 
     sources = []
     skipped = []
@@ -207,6 +219,8 @@ def remap_batch(records, target_path, link_missing=True):
 
 _library_item_cache = {}
 _library_enum_items = ()
+_browse_item = (BROWSE_TARGET, 'Choose Blend File...',
+                'Browse for a blend file and link matching data for the first time', 0)
 
 
 def library_items(self, context):
@@ -217,14 +231,50 @@ def library_items(self, context):
         if path not in _library_item_cache:
             _library_item_cache[path] = (
                 path, os.path.basename(path) + '  —  ' + path, path,
-                len(_library_item_cache),
+                len(_library_item_cache) + 1,
             )
-    _library_enum_items = tuple(_library_item_cache[path] for path in paths)
+    _library_enum_items = tuple(_library_item_cache[path] for path in paths) + (_browse_item,)
     return _library_enum_items
 
 
 def target_library_changed(self, context):
-    self.target_path = self.target_library
+    self.target_path = '' if self.target_library == BROWSE_TARGET else self.target_library
+
+
+def execute_remap(operator, context, target_path, records, link_missing):
+    if not records:
+        operator.report({'ERROR'}, 'No data-blocks selected in the Outliner')
+        return {'CANCELLED'}
+    try:
+        remapped, skipped, failures, linked = remap_batch(records, target_path, link_missing)
+    except (OSError, RuntimeError, ValueError) as exc:
+        operator.report({'ERROR'}, str(exc))
+        # A failed library load may have modified Main: keep it undoable.
+        return {'FINISHED'}
+    for name, reason in skipped + failures:
+        print(f'[Batch Remap User] {name}: {reason}')
+    severity = {'WARNING'} if skipped or failures else {'INFO'}
+    operator.report(severity, f'Remapped: {remapped}, linked: {linked}, skipped: {len(skipped)}, failed: {len(failures)}')
+    for window in context.window_manager.windows:
+        for area in window.screen.areas:
+            area.tag_redraw()
+    return {'FINISHED'}
+
+
+class OUTLINER_OT_batch_remap_user_file(bpy.types.Operator, ImportHelper):
+    """Own the selection snapshot while the Outliner becomes a file browser."""
+    bl_idname = 'outliner.batch_remap_user_file'
+    bl_label = 'Batch Remap User'
+    bl_description = 'Choose a blend file, link exact matches, and remap the selected data-blocks'
+    bl_options = {'UNDO', 'INTERNAL'}
+
+    filename_ext = '.blend'
+    filter_glob: StringProperty(default='*.blend', options={'HIDDEN'})
+    selection_json: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        records = json.loads(self.selection_json or '[]')
+        return execute_remap(self, context, self.filepath, records, True)
 
 
 class OUTLINER_OT_batch_remap_user(bpy.types.Operator):
@@ -237,7 +287,7 @@ class OUTLINER_OT_batch_remap_user(bpy.types.Operator):
         name='Target Blend File', items=library_items, update=target_library_changed,
     )
     target_path: StringProperty(options={'HIDDEN'})
-    selection_json: StringProperty(options={'HIDDEN'})
+    selection_json: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
     link_missing: BoolProperty(
         name='Link Missing Matching Data', default=True,
         description='Link exact matches from the target file if they are not loaded yet',
@@ -247,13 +297,6 @@ class OUTLINER_OT_batch_remap_user(bpy.types.Operator):
     def poll(cls, context):
         if not context.area or context.area.type != 'OUTLINER':
             cls.poll_message_set('Run from the Outliner')
-            return False
-        # LIBRARIES is the API enum for the UI's "Blender File" mode.
-        if context.space_data.display_mode != 'LIBRARIES':
-            cls.poll_message_set('Switch the Outliner to Blender File')
-            return False
-        if not bpy.data.libraries:
-            cls.poll_message_set('Link an external blend file first')
             return False
         if not getattr(context, 'selected_ids', ()) and not isinstance(getattr(context, 'id', None), bpy.types.ID):
             cls.poll_message_set('Select data-blocks in the Outliner')
@@ -270,16 +313,20 @@ class OUTLINER_OT_batch_remap_user(bpy.types.Operator):
             return {'CANCELLED'}
         self.selection_json = json.dumps(records)
         self.target_path = ''
-        paths = [item[0] for item in library_items(self, context)]
+        paths = [item[0] for item in library_items(self, context) if item[0] != BROWSE_TARGET]
         # Prefer a library different from all selected source libraries.
         source_paths = {path_key(record['library']) for record in records if record['library']}
-        self.target_library = next((path for path in paths if path_key(path) not in source_paths), paths[0])
+        self.target_library = next((path for path in paths if path_key(path) not in source_paths),
+                                   paths[0] if paths else BROWSE_TARGET)
         return context.window_manager.invoke_props_dialog(self, width=650)
 
     def draw(self, context):
         layout = self.layout
         layout.prop(self, 'target_library')
-        layout.prop(self, 'link_missing')
+        if self.target_library == BROWSE_TARGET:
+            layout.label(text='Press OK to choose a blend file and link matching data.')
+        else:
+            layout.prop(self, 'link_missing')
         records = json.loads(self.selection_json or '[]')
         layout.label(text=f'Selected: {len(records)} data-block(s)')
         layout.label(text='Exact names and types only. All users of each selected ID are remapped.', icon='INFO')
@@ -288,29 +335,22 @@ class OUTLINER_OT_batch_remap_user(bpy.types.Operator):
     def execute(self, context):
         # Enum changes update this path; also accept a path for scripted calls.
         target_path = self.target_path or self.target_library
+        records = json.loads(self.selection_json) if self.selection_json else snapshot_selection(context)
+        if target_path == BROWSE_TARGET:
+            bpy.ops.outliner.batch_remap_user_file(
+                'INVOKE_DEFAULT', selection_json=json.dumps(records),
+            )
+            # This operator has made no changes. The file browser owns the undo.
+            return {'CANCELLED'}
         if not target_path:
-            self.report({'ERROR'}, 'Choose a linked blend file')
+            self.report({'ERROR'}, 'Choose a blend file')
             return {'CANCELLED'}
         self.target_path = target_path
-        records = json.loads(self.selection_json) if self.selection_json else snapshot_selection(context)
-        try:
-            remapped, skipped, failures, linked = remap_batch(records, target_path, self.link_missing)
-        except (OSError, RuntimeError, ValueError) as exc:
-            self.report({'ERROR'}, str(exc))
-            # A failed library load may have modified Main: keep it undoable.
-            return {'FINISHED'}
-        for name, reason in skipped + failures:
-            print(f'[Batch Remap User] {name}: {reason}')
-        severity = {'WARNING'} if skipped or failures else {'INFO'}
-        self.report(severity, f'Remapped: {remapped}, linked: {linked}, skipped: {len(skipped)}, failed: {len(failures)}')
-        for window in context.window_manager.windows:
-            for area in window.screen.areas:
-                area.tag_redraw()
-        return {'FINISHED'}
+        return execute_remap(self, context, target_path, records, self.link_missing)
 
 
 def draw_menu(self, context):
-    if context.space_data and context.space_data.type == 'OUTLINER' and context.space_data.display_mode == 'LIBRARIES':
+    if context.space_data and context.space_data.type == 'OUTLINER':
         self.layout.separator()
         self.layout.operator_context = 'INVOKE_DEFAULT'
         operator = self.layout.operator(OUTLINER_OT_batch_remap_user.bl_idname)
@@ -323,6 +363,7 @@ MENU_NAMES = ('OUTLINER_MT_id_data', 'OUTLINER_MT_object',
 
 
 def register():
+    bpy.utils.register_class(OUTLINER_OT_batch_remap_user_file)
     bpy.utils.register_class(OUTLINER_OT_batch_remap_user)
     for name in MENU_NAMES:
         getattr(bpy.types, name).append(draw_menu)
@@ -333,6 +374,7 @@ def unregister():
     for name in reversed(MENU_NAMES):
         getattr(bpy.types, name).remove(draw_menu)
     bpy.utils.unregister_class(OUTLINER_OT_batch_remap_user)
+    bpy.utils.unregister_class(OUTLINER_OT_batch_remap_user_file)
     _library_enum_items = ()
     _library_item_cache.clear()
 

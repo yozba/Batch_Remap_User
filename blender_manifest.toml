@@ -2,7 +2,7 @@
 # Batch_Remap_User/ is the extension directory; this manifest belongs at its root.
 schema_version = "1.0.0"
 id = "batch_remap_user"
-version = "0.1.2"
+version = "0.2.0"
 name = "Batch Remap User"
 tagline = "Remap selected data-blocks by name to a linked blend file"
 maintainer = "sankaku"
@@ -12,7 +12,7 @@ license = ["SPDX:GPL-3.0-or-later"]
 tags = ["Pipeline"]
 
 [permissions]
-files = "Read matching data-blocks from already linked blend files"
+files = "Read matching data-blocks from chosen blend files"
 
 [build]
 paths_exclude_pattern = [
